@@ -8,7 +8,10 @@ COPY *.go ./
 
 RUN GOARCH=amd64 GOOS=linux CGO_ENABLED=0 go build -o echo-server .
 
-FROM scratch
-EXPOSE 9999
+FROM alpine
+EXPOSE 8080
+EXPOSE 8443
 COPY --from=builder /var/build/echo-server /app/echo-server
-CMD ["./app/echo-server"]
+COPY localhost.key /app/tls/localhost.key
+COPY localhost.crt /app/tls/localhost.crt
+CMD ["/app/echo-server"]
