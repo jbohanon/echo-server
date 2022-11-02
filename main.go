@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"flag"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -13,65 +11,19 @@ import (
 	"strings"
 )
 
-var (
-	server, tlsServer *http.Server
-	port, tlsPort     int
-)
-
 func main() {
-	log.Println("parsing flags")
-	var useConnectProxy bool
-	flag.BoolVar(&useConnectProxy, "use-connect-proxy", false, "set to true to turn into CONNECT proxy")
-	flag.IntVar(&port, "port", 8080, "http port")
-	flag.IntVar(&tlsPort, "tls-port", 8443, "https port")
-	flag.Parse()
-	log.Println("flags parsed")
+	port := ":9999"
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		m := printHeaders(r, w)
+		if err := copyBody(m, w, r); err != nil {
+			log.Printf("[ERROR] %v\n", err)
+		}
+	})
 
-	var (
-		handlerFunc, tlsHandlerFunc http.HandlerFunc
-	)
-	if useConnectProxy {
-		log.Println("using connect proxy")
-		handlerFunc = connectProxy
-		tlsHandlerFunc = connectProxy
-	} else {
-		log.Println("using standard echo server")
-		handlerFunc = func(w http.ResponseWriter, r *http.Request) {
-			sharedHandleFunc("http", w, r)
-		}
-		tlsHandlerFunc = func(w http.ResponseWriter, r *http.Request) {
-			sharedHandleFunc("https", w, r)
-		}
-	}
-	server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: handlerFunc,
-	}
-	tlsServer = &http.Server{
-		Addr:    fmt.Sprintf(":%d", tlsPort),
-		Handler: tlsHandlerFunc,
-	}
-	connectStr := func() string {
-		if useConnectProxy {
-			return "CONNECT "
-		}
-		return ""
-	}
-	go func() {
-		log.Printf("%sserver is running on localhost:%d\n", connectStr(), port)
-		log.Fatal(server.ListenAndServe())
-	}()
-	log.Printf("TLS %sserver is running on localhost:%d\n", connectStr(), tlsPort)
-	log.Fatal(tlsServer.ListenAndServeTLS("/app/tls/localhost.crt", "/app/tls/localhost.key"))
-}
+	log.Println("Server is running on localhost:9999")
 
-func sharedHandleFunc(handler string, w http.ResponseWriter, r *http.Request) {
-	log.Printf("handing request from %s handler\n", handler)
-	defer r.Body.Close()
-	m := printHeaders(r, w)
-	if err := copyBody(m, w, r); err != nil {
-		log.Printf("[ERROR] %v\n", err)
-	}
+	log.Fatal(http.ListenAndServe(port, nil))
 }
 
 func printHeaders(r *http.Request, w http.ResponseWriter) map[string]string {
