@@ -16,12 +16,14 @@ import (
 var (
 	server, tlsServer *http.Server
 	port, tlsPort     int
+	useTlsTunnel      bool
 )
 
 func main() {
 	log.Println("parsing flags")
 	var useConnectProxy bool
 	flag.BoolVar(&useConnectProxy, "use-connect-proxy", false, "set to true to turn into CONNECT proxy")
+	flag.BoolVar(&useTlsTunnel, "use-tls-tunnel", false, "set to true to make proxy set up tls tunnel to destination")
 	flag.IntVar(&port, "port", 8080, "http port")
 	flag.IntVar(&tlsPort, "tls-port", 8443, "https port")
 	flag.Parse()
