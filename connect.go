@@ -100,6 +100,7 @@ func connectProxy(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
+			log.Println("read from target", bts)
 			_, err = conn.Write(bts)
 			if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, syscall.EPIPE) {
 				logError(fmt.Errorf("error writing from target to caller %v\n", err))
@@ -118,6 +119,7 @@ func connectProxy(w http.ResponseWriter, r *http.Request) {
 			// read bytes from buf.Reader until EOF
 			bts := []byte{1}
 			_, err := buf.Read(bts)
+			log.Println("read from envoy", bts)
 			if err != nil {
 				logError(err)
 				return
