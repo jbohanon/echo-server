@@ -38,32 +38,42 @@ func connectProxy(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		logError(errors.New("no hijacker"))
 	}
-	host := r.URL.Host
-	hostport := strings.Split(host, ":")
-	tlsTarget := false
-	if len(hostport) == 2 {
-		if hostport[1] == "443" {
-			tlsTarget = true
-		}
-	}
-
 	var targetConn net.Conn
 	var err error
-	if tlsTarget {
-		log.Println("creating tls dialer")
-		dialer := &tls.Dialer{
-			Config: &tls.Config{},
+	if useTlsTunnel {
+		host := r.URL.Host
+		hostport := strings.Split(host, ":")
+		tlsTarget := false
+		if len(hostport) == 2 {
+			if hostport[1] == "443" {
+				tlsTarget = true
+			}
 		}
-		log.Println("dialing tls")
-		targetConn, err = dialer.Dial("tcp", host)
-		if err != nil {
-			log.Printf("[ERROR] can't connect: %v", err)
-			http.Error(w, fmt.Sprintf("can't connect: %v", err), 500)
-			return
+
+		if tlsTarget {
+			log.Println("creating tls dialer")
+			dialer := &tls.Dialer{
+				Config: &tls.Config{},
+			}
+			log.Println("dialing tls")
+			targetConn, err = dialer.Dial("tcp", host)
+			if err != nil {
+				log.Printf("[ERROR] can't connect: %v", err)
+				http.Error(w, fmt.Sprintf("can't connect: %v", err), 500)
+				return
+			}
+		} else {
+			log.Println("creating net dialer")
+			targetConn, err = net.Dial("tcp", host)
+			if err != nil {
+				log.Printf("[ERROR] can't connect: %v", err)
+				http.Error(w, fmt.Sprintf("can't connect: %v", err), 500)
+				return
+			}
 		}
 	} else {
 		log.Println("creating net dialer")
-		targetConn, err = net.Dial("tcp", host)
+		targetConn, err = net.Dial("tcp", r.URL.Host)
 		if err != nil {
 			log.Printf("[ERROR] can't connect: %v", err)
 			http.Error(w, fmt.Sprintf("can't connect: %v", err), 500)
@@ -79,7 +89,7 @@ func connectProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	log.Printf("Accepting CONNECT to %s\n", host)
+	log.Printf("Accepting CONNECT to %s\n", r.URL.Host)
 	// note to devs! will only work with HTTP 1.1 request from envoy!
 	conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 
