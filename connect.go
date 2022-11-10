@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -98,6 +99,7 @@ func connectProxy(w http.ResponseWriter, r *http.Request) {
 	wg.Add(2)
 
 	go func() {
+		logBuf := bytes.Buffer{}
 		for {
 			// read bytes from buf.Reader until EOF
 			bts := []byte{1}
@@ -110,13 +112,27 @@ func connectProxy(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			log.Println("read from target", bts)
+			wg2 := sync.WaitGroup{}
+			wg2.Add(1)
+			go func() {
+				defer func() {
+					if v := recover(); v != nil {
+						log.Println(v)
+						logBuf.Reset()
+					}
+					wg2.Done()
+				}()
+				logBuf.Write(bts)
+			}()
+			wg2.Wait()
+
 			_, err = conn.Write(bts)
 			if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, syscall.EPIPE) {
 				logError(fmt.Errorf("error writing from target to caller %v\n", err))
 				return
 			}
 		}
+		log.Println("read from target", logBuf.Bytes())
 		err = buf.Flush()
 		if err != nil {
 			logError(err)
@@ -125,21 +141,37 @@ func connectProxy(w http.ResponseWriter, r *http.Request) {
 		wg.Done()
 	}()
 	go func() {
+		logBuf := bytes.Buffer{}
 		for !isEof(buf.Reader) {
 			// read bytes from buf.Reader until EOF
 			bts := []byte{1}
 			_, err := buf.Read(bts)
-			log.Println("read from envoy", bts)
 			if err != nil {
 				logError(err)
 				return
 			}
+
+			wg2 := sync.WaitGroup{}
+			wg2.Add(1)
+			go func() {
+				defer func() {
+					if v := recover(); v != nil {
+						log.Println(v)
+						logBuf.Reset()
+					}
+					wg2.Done()
+				}()
+				logBuf.Write(bts)
+			}()
+			wg2.Wait()
+
 			_, err = targetConn.Write(bts)
 			if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, syscall.EPIPE) {
 				logError(fmt.Errorf("error writing from caller to target %v\n", err))
 				return
 			}
 		}
+		log.Println("read from caller", logBuf.Bytes())
 		wg.Done()
 	}()
 
