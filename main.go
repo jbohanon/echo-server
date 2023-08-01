@@ -3,64 +3,127 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"io"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 )
 
 func main() {
 	port := ":9999"
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		defer r.Body.Close()
-		m := printHeaders(r, w)
-		if err := copyBody(m, w, r); err != nil {
-			log.Printf("[ERROR] %v\n", err)
-		}
-	})
+
+	http.HandleFunc("/", handleRoot)
+	http.HandleFunc("/headers", handleHeaders)
+	http.HandleFunc("/body", handleBody)
 
 	log.Println("Server is running on localhost:9999")
 
 	log.Fatal(http.ListenAndServe(port, nil))
 }
 
-func printHeaders(r *http.Request, w http.ResponseWriter) map[string]string {
-	m := map[string]string{
-		"Host":           r.Host,
-		"Method":         r.Method,
-		"Proto":          r.Proto,
-		"RemoteAddr":     r.RemoteAddr,
-		"RequestURI":     r.RequestURI,
-		"Content-Length": strconv.Itoa(int(r.ContentLength)),
-	}
-	for k, v := range r.Header {
-		vjoined := strings.Join(v, ",")
-		log.Printf("[%s]: %s\n", k, vjoined)
-		//w.Header().Set(k, vjoined)
-		m[k] = vjoined
-	}
-	return m
+type responseBodyConstructor func(*request) error
+
+type request struct {
+	w             http.ResponseWriter
+	body          []byte
+	responseBody  *bytes.Buffer
+	headers       http.Header
+	contentLength int
 }
-func copyBody(m map[string]string, w http.ResponseWriter, r *http.Request) error {
-	var buf *bytes.Buffer
-	if b, err := json.Marshal(m); err == nil {
-		buf = bytes.NewBuffer(b)
+
+func (r *request) writeResponse(code int) {
+	r.w.Header().Set("Content-Length", strconv.Itoa(r.contentLength))
+	_, err := io.Copy(r.w, r.responseBody)
+	if err != nil {
+		r.w.Header().Add("status", strconv.Itoa(http.StatusInternalServerError))
+		r.w.Write([]byte(err.Error()))
 	}
-	if buf == nil {
-		return errors.New("nil buf")
+}
+
+// newRequest reads the body and closes it
+func newRequest(w http.ResponseWriter, r *http.Request) (*request, error) {
+	defer r.Body.Close()
+
+	b, err := io.ReadAll(r.Body)
+	if err != nil {
+		return nil, err
 	}
-	_, err := io.Copy(buf, r.Body)
+
+	req := &request{
+		headers:      r.Header,
+		body:         b,
+		responseBody: &bytes.Buffer{},
+		w:            w,
+	}
+	req.headers.Add("Host", r.Host)
+	req.headers.Add("Method", r.Method)
+	req.headers.Add("Proto", r.Proto)
+	req.headers.Add("RemoteAddr", r.RemoteAddr)
+	req.headers.Add("RequestURI", r.RequestURI)
+	req.headers.Add("X-Received-Content-Length", strconv.Itoa(int(r.ContentLength)))
+
+	return req, nil
+}
+
+func handleRoot(w http.ResponseWriter, r *http.Request) {
+	handle(w, r, responseBodyWithHeaders)
+}
+
+func handleBody(w http.ResponseWriter, r *http.Request) {
+	handle(w, r, responseBodyEcho)
+}
+
+func handleHeaders(w http.ResponseWriter, r *http.Request) {
+	handle(w, r, responseBodyHeadersOnly)
+}
+
+func handle(w http.ResponseWriter, r *http.Request, bodyConstructor responseBodyConstructor) {
+	req, err := newRequest(w, r)
+	if err != nil {
+		returnError(w, err, http.StatusBadRequest)
+	}
+
+	err = bodyConstructor(req)
+	if err != nil {
+		returnError(w, err, http.StatusInternalServerError)
+	}
+
+	req.writeResponse(http.StatusOK)
+
+}
+
+func returnError(w http.ResponseWriter, err error, code int) {
+	w.Header().Add("status", strconv.Itoa(code))
+	w.Write([]byte(err.Error()))
+}
+
+func responseBodyHeadersOnly(req *request) error {
+	b, err := json.Marshal(req.headers)
 	if err != nil {
 		return err
 	}
 
-	w.Header().Set("Content-Length", strconv.Itoa(len(buf.Bytes())))
-	_, err = io.Copy(w, buf)
+	req.contentLength, err = req.responseBody.Write(b)
+	return nil
+}
+
+func responseBodyEcho(req *request) error {
+	var err error
+	req.contentLength, err = req.responseBody.Write(req.body)
+	return err
+}
+
+func responseBodyWithHeaders(req *request) error {
+	m := map[string]any{
+		"headers": req.headers,
+		"body":    req.body,
+	}
+
+	b, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}
 
+	req.contentLength, err = req.responseBody.Write(b)
 	return nil
 }
